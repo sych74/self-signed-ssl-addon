@@ -1,0 +1,41 @@
+type: install
+jpsVersion: 6.1.1
+name: Self Signed SSL addon
+id: self-signed-certificate-addon
+targetEditions: any
+categories:
+  - apps/dev-and-admin-tools
+description: Self Signed Certificate addon.
+baseUrl: https://raw.githubusercontent.com/sych74/self-signed-ssl-addon/new/main
+
+
+settings:
+  fields:
+    - type: list
+      name: envName
+      caption: Environment
+      required: true
+      values: []
+
+    - type: list
+      name: nodeGroups
+      caption: Node Group(s)
+      required: true
+      multiSelect: true
+      dependsOn:
+        envName: {}
+
+onBeforeInit: scripts/onBeforeInit.js
+
+onInstall:
+  - install [${settings.nodeGroups}]:
+      envName: ${settings.envName}
+      jps: logic.jps?_r=${fn.random}
+      settings:
+        nodeGroups: ${settings.nodeGroups}
+        envName: ${settings.envName}
+        
+success:
+  email: false
+  text: |
+    Your Self Signed Certificates has been successfully deployed to ${settings.envName} (target layers: ${settings.nodeGroups}).
