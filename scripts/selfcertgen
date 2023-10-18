@@ -5,7 +5,7 @@ source /etc/jelastic/metainf.conf
 
 TARGET_LAYER=$3
 ENV_NAME=$2
-MYSQL_USER=$1
+USER=$1
 
 if [ -z "${ENV_NAME}" ]; then
     NODE_NAME_LENGTH=$(hostname|grep -o 'node[0-9]*-'|wc -c)
@@ -28,7 +28,7 @@ CERT_DIR="/var/lib/jelastic/keys/SSL-TLS";
 [ -z "$KEY_SIZE" ] && export KEY_SIZE=2048
 [ -z "$KEY_HOST" ] && export KEY_HOST=$(hostname)
 [ -z "$KEY_EXPIRE" ] && export KEY_EXPIRE=3650
-[ -z "$MYSQL_USER" ] && export MYSQL_USER="root"
+[ -z "$USER" ] && export USER="root"
 
 ALTNAME=$(ip a | grep -A1 venet0 | grep inet | awk '{print $2}'| sed 's/\/[0-9]*//g' | head -n 2|tail -n 1)
 
