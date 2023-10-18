@@ -1,0 +1,184 @@
+type: update
+jpsVersion: 6.1.1
+name: Self Signed Certificates
+id: self-signed-based-certificates
+targetEditions: any
+description: Self Signed Certificates.
+baseUrl: https://raw.githubusercontent.com/sych74/self-signed-ssl-addon/main
+
+targetNodes:
+  nodeType:
+    - llsmp
+
+globals:
+  certFolder: /var/lib/jelastic/keys/SSL-TLS
+  keyPass: ${fn.password}
+
+onInstall:
+  - installCertsOnEnv
+
+onUninstall:
+  - disableSSL
+
+buttons:
+  - confirmText: Do you want to reissue the Self Signed Certificates and key (service restart needed)?
+    loadingText: Reissuing the certificates...
+    action: reGenerateCerts
+    caption: Re-issue certificates
+    successText: Certificates reissued successfully
+
+actions:
+  installCertsOnEnv:
+    - getMasterId
+    - env.control.AddContainerEnvVars[${targetNodes.nodeGroup}]:
+        vars: {"KEY_PASS":"${globals.keyPass}"}
+    - cmd[${targetNodes.nodeGroup}]: |-
+        mkdir -p ${globals.certFolder}/server/
+        wget -O /usr/local/sbin/copyCert ${baseUrl}/scripts/copyCert?_r=${fn.random};
+        chmod +x /usr/local/sbin/copyCert
+      user: root
+    - turnOnSSLForNodes:
+        nodesToEnableSSL: ${globals.masterId}
+
+  uploadCertsAndKeys:
+    - cmd[${this.newNodes}]: |-
+        copyCert uploadCert ${globals.certFolder}/root.key '${globals.rootCaKey}'
+        copyCert uploadCert ${globals.certFolder}/root.crt '${globals.rootCaCert}'
+      user: root
+
+  reGenerateCerts:
+    - forEach(nodes.${targetNodes.nodeGroup}):
+      - cmd[${@i.id}]: jem service stop 
+    - cmd[${targetNodes.nodeGroup}]: |-
+        rm -rf ${globals.certFolder}/*;
+      user: root
+    - installCertsOnEnv
+            
+  getMasterId:
+    - forEach(nodes.${targetNodes.nodeGroup}):
+      - cmd[${@i.id}]: |- 
+          source /.jelenv;  
+          echo ${MASTER_ID};
+      - setGlobals:
+          masterId: ${response.out}
+
+  generateCerts:
+    - cmd[${this.affectedNodes}]: |-
+        [ -f /usr/local/sbin/selfcertgen ] && rm -f /usr/local/sbin/selfcertgen;
+        [ -f /usr/local/sbin/copyCert ] && rm -f /usr/local/sbin/copyCert;
+        wget -O /usr/local/sbin/selfcertgen ${baseUrl}/scripts/selfcertgen?_r=${fn.random};
+        wget -O /usr/local/sbin/copyCert ${baseUrl}/scripts/copyCert?_r=${fn.random};
+        chmod +x /usr/local/sbin/selfcertgen /usr/local/sbin/copyCert
+        selfcertgen root ${env.domain} ${targetNodes.nodeGroup};
+        chown -R 700:700 ${globals.certFolder} /usr/local/sbin/selfcertgen; chmod 600 ${globals.certFolder}/*
+      user: root
+    - cmd[${this.affectedNodes}]: |-
+        rm -rf ${globals.certFolder}/client; mkdir -p ${globals.certFolder}/client;
+        rm -rf ${globals.certFolder}/server; mkdir -p ${globals.certFolder}/server;
+        chown -R 700:700 ${globals.certFolder}/*
+        rm -f ${globals.certFolder}/client.csr ${globals.certFolder}/server.csr ${globals.certFolder}/client-req.pem ${globals.certFolder}/server-req.pem
+        for i in client.crt client.key
+        do
+            [ -f ${globals.certFolder}/${i} ] && mv -f ${globals.certFolder}/${i} ${globals.certFolder}/client/${i}
+        done
+        for i in root.crt root.srl server.crt server.key root.key
+        do
+            [ -f ${globals.certFolder}/${i} ] && mv -f ${globals.certFolder}/${i} ${globals.certFolder}/server/${i}
+        done
+        ln -sfT ${globals.certFolder}/server/root.crt ${globals.certFolder}/client/root.crt
+      user: root
+
+  enableSSL:
+    - cmd[${this.affectedNodes}]: |-
+        wget https://github.com/IBM-Cloud/redli/releases/download/v${globals.redliVersion}/redli_${globals.redliVersion}_linux_amd64.tar.gz
+        tar -xvzf redli_${globals.redliVersion}_linux_amd64.tar.gz; mv -f redli /usr/bin/; chmod +x /usr/bin/redli; rm -f redli_${globals.redliVersion}_linux_amd64.tar.gz
+        echo "${globals.certFolder}" >> /etc/jelastic/redeploy.conf
+        sed -ci -e "/# tls-auth-clients optional/d" ${globals.redisConfig}
+        if [ -e ${globals.redisConfig} ]; then
+            for i in tls-cert-file tls-key-file tls-ca-cert-file tls-port tls-auth-clients
+            do
+                sed -ci -e "s/^[[:space:]]*#[[:space:]]*${i}/${i}/" ${globals.redisConfig}
+            done
+            if grep -q '^tls-ca-cert-file' ${globals.redisConfig}; then 
+                sed -ci -e "s|^tls-ca-cert-file.*|tls-ca-cert-file /var/lib/jelastic/keys/SSL-TLS/server/root.crt|" ${globals.redisConfig};             
+            else 
+                echo "tls-ca-cert-file /var/lib/jelastic/keys/SSL-TLS/server/root.crt" >> ${globals.redisConfig};
+            fi
+            if grep -q '^tls-cert-file' ${globals.redisConfig}; then 
+                sed -ci -e "s|^tls-cert-file.*|tls-cert-file /var/lib/jelastic/keys/SSL-TLS/server/server.crt|" ${globals.redisConfig};             
+            else 
+                echo "tls-cert-file /var/lib/jelastic/keys/SSL-TLS/server/server.crt" >> ${globals.redisConfig};
+            fi
+            if grep -q '^tls-key-file' ${globals.redisConfig}; then 
+                sed -ci -e "s|^tls-key-file.*|tls-key-file /var/lib/jelastic/keys/SSL-TLS/server/server.key|" ${globals.redisConfig};             
+            else 
+                echo "tls-key-file /var/lib/jelastic/keys/SSL-TLS/server/server.key" >> ${globals.redisConfig};
+            fi
+            if grep -q '^tls-port' ${globals.redisConfig}; then 
+                sed -ci -e "s|^tls-port.*|tls-port 6380|" ${globals.redisConfig};             
+            else 
+                echo "tls-port 6380" >> ${globals.redisConfig};
+            fi
+            if grep -q '^tls-auth-clients' ${globals.redisConfig}; then 
+                sed -ci -e "s|tls-auth-clients.*|tls-auth-clients optional|" ${globals.redisConfig};             
+            else 
+                echo "tls-auth-clients optional" >> ${globals.redisConfig};
+            fi
+        fi
+        systemctl reset-failed
+      user: root
+    - restartNodes:
+        nodeGroup: ${targetNodes.nodeGroup}
+        isSequential: false
+  
+  disableSSL:
+    - cleanupCustomFWRules: ${targetNodes.nodeGroup}
+    - cmd[${targetNodes.nodeGroup}]: |-
+        for i in tls-cert-file tls-key-file tls-ca-cert-file tls-port tls-cluster tls-auth-clients tls-protocols tls-replication
+        do
+            sed -ci -e "s/^${i}/#${i}/" ${globals.redisConfig}
+        done
+        if grep -q '^port 0' ${globals.redisConfig}; then 
+            sed -ci -e "s|port.*|port 6379|" ${globals.redisConfig};             
+        fi
+        for i in client.crt client.key root.crt
+        do
+            rm -f /var/lib/jelastic/keys/SSL-TLS/client/${i}
+        done
+        for i in root.crt root.srl server.crt server.key
+        do
+            rm -f /var/lib/jelastic/keys/SSL-TLS/server/${i}
+        done
+        sed -ci -e '/\/var\/lib\/jelastic\/keys\/SSL-TLS/d' /etc/jelastic/redeploy.conf
+        for i in client server
+        do
+            if [ -z "$(ls -A /var/lib/jelastic/keys/SSL-TLS/${i})" ]; then
+                rm -rf /var/lib/jelastic/keys/SSL-TLS/${i}
+            fi
+        done
+        systemctl reset-failed
+      user: root
+    - restartNodes:
+        nodeGroup: ${targetNodes.nodeGroup}
+        isSequential: false
+
+  addCertsForNewNodes:
+    - turnOnSSLForNodes:
+        nodesToEnableSSL: ${event.response.nodes.join(id,)}
+
+  checkAppVersion:
+    - cmd[${this.masternode}]: |-
+        source /etc/jelastic/metainf.conf
+        [ -f /root/check_app.sh ] && rm -f /root/check_app.sh;
+        wget -O /root/check_app.sh ${baseUrl}/scripts/check_app.sh?_r=${fn.random};
+        bash /root/check_app.sh;
+      user: root
+
+  fixCertOwnPerm:
+    - cmd[${targetNodes.nodeGroup}]: |-
+        chown -R 700:700 ${globals.certFolder}
+      user: root
+        
+  turnOnSSLForNodes:
+    - generateCerts: 
+        affectedNodes: ${this.nodesToEnableSSL}
