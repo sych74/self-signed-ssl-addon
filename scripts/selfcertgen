@@ -68,10 +68,10 @@ fi
 
 rm -f /var/lib/jelastic/keys/SSL-TLS/server-req.pem
 
-if [ "x${MYSQL_USER}" == "xroot" ]; then
+if [ "x${USER}" == "xroot" ]; then
     CLIENT_CERT_NAME="client"
 else
-    CLIENT_CERT_NAME="${MYSQL_USER}"
+    CLIENT_CERT_NAME="${USER}"
 fi
 
 if [ ! -f ${CERT_DIR}/${CLIENT_CERT_NAME}.crt ]; then
